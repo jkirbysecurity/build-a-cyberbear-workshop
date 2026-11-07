@@ -2,7 +2,7 @@
 
 ### Objectives
 
-The objectives of this section are to get to know and build some of the most common **AWS Infrastructure as a Service (IaaS) resources and services**; i.e., fundamental building blocks.  As a best practice when learning new services, we will first walk through getting to know the services and build them manually in the console.  We will then pivot into our **VS Code** text editor and build the resources using **Terraform**. 
+The objectives of this section are to get to know and build some of the most common **AWS Infrastructure as a Service (IaaS) resources and services**; i.e., fundamental building blocks.  As a best practice when learning new services, we will first walk through getting to know the services and build them manually in the console.  We will then pivot into our **VS Code** text editor to build and deploy the resources using **Terraform**. 
 
 We will --> Program the Cloud with Terraform in the Build-A-CyberBear Workshop
 
