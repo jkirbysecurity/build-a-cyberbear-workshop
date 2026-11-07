@@ -99,7 +99,7 @@ resource "aws_route_table" "public_route_table" {
   vpc_id = aws_vpc.vpc.id # Associates with VPC
 
   route {
-    cidr_block = "0.0.0.0/0"                              # All traffic
+    cidr_block = "0.0.0.0/0"                              # Traffic to the public internet
     gateway_id = aws_internet_gateway.internet_gateway.id # Routes through internet gateway
   }
 
