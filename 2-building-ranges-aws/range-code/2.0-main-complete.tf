@@ -73,7 +73,7 @@ provider "aws" {
       Project = var.project
       # Environment = var.environment
       Provisioned = "Terraform"
-      # Are there any other default tags we'd like to add?
+      # Are there any other default tags you would like to add?
     }
   }
 }
@@ -149,7 +149,7 @@ resource "random_string" "uid" {
 locals {
   name_prefix = var.project
 
-  # Set the cidr block for the server subnet
+  # Set the CIDR block for the server subnet
   public_sub_cidr_block  = "10.0.1.0/24"
   private_sub_cidr_block = "10.0.2.0/24"
 
@@ -157,6 +157,8 @@ locals {
   # SERVER HOSTS IP/HOSTNAME
   big_bear_hostname   = "big_bear"
   big_bear_private_ip = cidrhost(local.public_sub_cidr_block, 10)
+  coco_bear_hostname   = "coco_bear"
+  coco_bear_private_ip = cidrhost(local.public_sub_cidr_block, 11)
 
 }
 
@@ -171,6 +173,7 @@ module "ssh_key_pair" {
   private_key_extension = ".pem"
   public_key_extension  = ".pub"
 }
+
 
 ##########################################################################################
 # NETWORK
@@ -241,19 +244,6 @@ resource "aws_route_table_association" "public_rta" {
   depends_on = [aws_subnet.public_subnet]
 }
 
-  # Create VPC Flow Log
-  resource "aws_flow_log" "flow_logs" {
-  log_destination      = aws_s3_bucket.log_bucket.arn # Log destination
-  log_destination_type = "s3"                         # Log destination type
-  traffic_type         = "ALL"                        # Type of traffic to filter
-  vpc_id               = aws_vpc.vpc.id               # VPC to associate flow logs with
-
-  tags = {
-      Name = "${local.name_prefix}-flow-logs"
-  }
-
-  depends_on = [aws_s3_bucket.log_bucket]
-  }
 
 ##########################################################################################
 # SECURITY
@@ -273,7 +263,7 @@ resource "aws_vpc_security_group_ingress_rule" "allow_ssh" {
   to_port           = 22
   ip_protocol       = "tcp"
   cidr_ipv4         = "0.0.0.0/0" # Source IPs (any) - This is the same as global allow and should only be used with ports 80 & 443
-  # Security Group ingress cidr blocks should be restricted to the specific IPs required for the service
+  # Security Group ingress CIDR blocks should be restricted to the specific IPs required for the service
   # Only setting ssh global allow for playground purposes; NEVER set global allow ssh in production
 
   tags = {
@@ -288,7 +278,7 @@ resource "aws_vpc_security_group_ingress_rule" "allow_http" {
   to_port           = 80
   ip_protocol       = "tcp"
   cidr_ipv4         = "0.0.0.0/0" # Source IPs (any) - This is the same as global allow and should only be used with ports 80 & 443
-  # Security Group ingress cidr blocks should be restricted to the specific IPs required for the service
+  # Security Group ingress CIDR blocks should be restricted to the specific IPs required for the service
 
   tags = {
     Name = "allow-http"
@@ -302,13 +292,12 @@ resource "aws_vpc_security_group_ingress_rule" "allow_https" {
   to_port           = 443
   ip_protocol       = "tcp"
   cidr_ipv4         = "0.0.0.0/0" # Source IPs (any) - This is the same as global allow and should only be used with ports 80 & 443
-  # Security Group ingress cidr blocks should be restricted to the specific IPs required for the service
+  # Security Group ingress CIDR blocks should be restricted to the specific IPs required for the service
 
   tags = {
     Name = "allow-https"
   }
 }
-
 
 resource "aws_vpc_security_group_egress_rule" "allow_all" {
   description       = "Allow all outbound traffic"
@@ -336,6 +325,7 @@ resource "aws_instance" "big_bear" {
   vpc_security_group_ids      = [aws_security_group.cyberbear_sg.id] # Firewall rules.  Square brackets are used for this input because it takes a list
   private_ip                  = local.big_bear_private_ip            # Private IP assignment
   associate_public_ip_address = true                                 # Auto-assigns public IPs to instances -- only use if instance needs to be public, otherwise set to false
+  key_name                    = module.ssh_key_pair.key_name         # SSH key for access
   #ebs_optimized               = true # Optimize ebs for best performance
   #monitoring                  = true  # Use detailed monitoring in production
 
@@ -368,144 +358,38 @@ resource "aws_instance" "big_bear" {
   depends_on = [aws_subnet.public_subnet]
 }
 
-############################################################################################
-# S3 BUCKETS
-############################################################################################
-########################################
-# KMS Keys
-########################################
-# Create KMS key for encrypting bucket
-resource "aws_kms_key" "bucket_key" {
-  description             = "This key is used to encrypt bucket objects"
-  enable_key_rotation     = true # Enables auto key rotation
-  deletion_window_in_days = 7    # 7-30 days
-}
+#######################################
+# Coco Bear
+#######################################
+# Creates EC2 instance
+resource "aws_instance" "coco_bear" {
+  ami                         = data.aws_ami.ubuntu24.id             # Amazon Machine Image
+  instance_type               = var.lnx_servers_instance_type        # Server size (CPU/memory)
+  subnet_id                   = aws_subnet.public_subnet.id          # Network placement
+  vpc_security_group_ids      = [aws_security_group.cyberbear_sg.id] # Firewall rules.  Square brackets are used for this input because it takes a list
+  private_ip                  = local.coco_bear_private_ip           # Private IP assignment
+  associate_public_ip_address = true                                 # Auto-assigns public IPs to instances -- only use if instance needs to be public, otherwise set to false
+  key_name                    = module.ssh_key_pair.key_name         # SSH key for access
 
-resource "aws_kms_alias" "bucket_key_alias" {
-  name          = "alias/bucket-key"
-  target_key_id = aws_kms_key.bucket_key.key_id
-}
+  # Pass inline user-date script directly
+  user_data = <<-EOF
+     #!/bin/bash
+     sudo apt update -y
+     sudo apt install apache2 -y
+     sudo systemctl start apache2
+     sudo systemctl enable apache2
+     cd /var/www/html
+     echo "<html><h1>Hello Cloud Rangers. Welcome to the ${local.coco_bear_hostname} webpage.</h1></html>" > index.html
+     EOF
 
-# Log bucket
-resource "aws_s3_bucket" "log_bucket" {
-  bucket = "${local.name_prefix}-log-bucket-${random_string.uid.result}" # bucket name
 
-  force_destroy = true # only use during testing
-}
-
-# Bucket Ownership
-resource "aws_s3_bucket_ownership_controls" "log_bucket_owner" {
-  bucket = aws_s3_bucket.log_bucket.id # Bucket to associate to
-  rule {
-    object_ownership = "BucketOwnerEnforced" # Defines bucket/object ownership
+  tags = {
+    Name = "${local.name_prefix}-${local.coco_bear_hostname}"
   }
+
+  depends_on = [aws_subnet.public_subnet]
 }
 
-# S3 Public Access Block
-# This should be default configuration for all buckets - required for security.  Open up as needed for specific use case.
-resource "aws_s3_bucket_public_access_block" "log_bucket_block_public_access" {
-  bucket = aws_s3_bucket.log_bucket.id # Bucket to associate to
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# Enables KMS encryption
-resource "aws_s3_bucket_server_side_encryption_configuration" "log_bucket_encryption" {
-  bucket = aws_s3_bucket.log_bucket.id # Bucket to associate to
-
-  rule {
-    apply_server_side_encryption_by_default {
-      kms_master_key_id = aws_kms_key.bucket_key.arn # KMS key association  
-      sse_algorithm     = "aws:kms"                  # Server-side encryption algorithm
-    }
-
-    bucket_key_enabled = true # When KMS encryption is used to encrypt new objects in this bucket, the bucket key reduces encryption costs by lowering calls to AWS KMS
-  }
-}
-
-# Enables bucket versioning
-resource "aws_s3_bucket_versioning" "log_bucket_versioning" {
-  bucket = aws_s3_bucket.log_bucket.id # Bucket to associate to
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-# Enables bucket access logging
-resource "aws_s3_bucket_logging" "log_bucket_logging" {
-  bucket = aws_s3_bucket.log_bucket.id # Bucket to associate to
-
-  target_bucket = aws_s3_bucket.log_bucket.id # Target bucket where you're sending logs to
-  target_prefix = "access-logs/"              # Send logs to folder with the target prefix
-}
-
-# Force SSL to access bucket
-resource "aws_s3_bucket_policy" "log_force_ssl_bucket_policy" {
-  bucket = aws_s3_bucket.log_bucket.id # Bucket to associate to
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid       = "ForceSSLOnlyAccess"
-      Effect    = "Deny"
-      Principal = "*"
-      Action    = "s3:*"
-      Resource = [
-        "${aws_s3_bucket.log_bucket.arn}/*",
-        "${aws_s3_bucket.log_bucket.arn}"
-      ],
-      Condition = {
-        Bool = {
-          "aws:SecureTransport" = "false"
-        }
-      }
-    }]
-  })
-}
-
-# Enables and sets bucket data lifecycle configuration
-resource "aws_s3_bucket_lifecycle_configuration" "log_bucket_config" {
-  bucket = aws_s3_bucket.log_bucket.id # Bucket to associate to
-
-  rule {
-    id = "logs"
-
-    status = "Enabled" # Enabled or Disabled
-
-    abort_incomplete_multipart_upload {
-      days_after_initiation = 1 # number
-    }
-
-    expiration {
-      days = 365 # integer > 0
-    }
-
-    transition {
-      days          = 30            # integer >= 0
-      storage_class = "STANDARD_IA" # string/enum, one of GLACIER, STANDARD_IA, ONEZONE_IA, INTELLIGENT_TIERING, DEEP_ARCHIVE, GLACIER_IR.
-    }
-
-    transition {
-      days          = 60        # integer >= 0
-      storage_class = "GLACIER" # string/enum, one of GLACIER, STANDARD_IA, ONEZONE_IA, INTELLIGENT_TIERING, DEEP_ARCHIVE, GLACIER_IR.
-    }
-
-    noncurrent_version_expiration {
-      newer_noncurrent_versions = 3  # integer > 0
-      noncurrent_days           = 60 # integer >= 0
-    }
-
-    noncurrent_version_transition {
-      newer_noncurrent_versions = 3         # integer >= 0
-      noncurrent_days           = 30        # integer >= 0
-      storage_class             = "GLACIER" # string/enum, one of GLACIER, STANDARD_IA, ONEZONE_IA, INTELLIGENT_TIERING, DEEP_ARCHIVE, GLACIER_IR.
-    }
-  }
-}
 
 ##########################################################################################
 # OUTPUTS
@@ -566,10 +450,11 @@ output "zdetails" {
     public ip: ${aws_instance.big_bear.public_ip}
    private ip: ${local.big_bear_private_ip}
            -->  ${local.ssh_prefix} ec2-user@${aws_instance.big_bear.public_ip}
+ coco_bear: 
+    public ip: ${aws_instance.coco_bear.public_ip}
+   private ip: ${local.coco_bear_private_ip}
+           -->  ${local.ssh_prefix} ubuntu@${aws_instance.coco_bear.public_ip}
 
- S3 Bucket
- --------------------------------------------------------------------------------------
- ${aws_s3_bucket.log_bucket.id}
 
  --------------------------------------------------------------------------------------
  Have fun with your new CyberBear Range!
@@ -578,3 +463,4 @@ output "zdetails" {
 
  EOF
 }
+
